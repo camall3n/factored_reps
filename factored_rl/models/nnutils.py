@@ -3,29 +3,35 @@ import logging
 import math
 import os
 import shutil
-from typing import Union, List
+from typing import Callable, Union, List
 
 import numpy as np
 import torch
 import torch.nn
 from torch.nn.functional import dropout
+from torch.nn.modules import activation
 
-Activation = Union[torch.nn.Module, type]
-ActivationType = Union[Activation, List[Activation]]
+Activation = Callable[..., torch.nn.Module]
+
 
 def conv2d_size_out(size, kernel_size, stride):
-    ''' Adapted from pytorch tutorials:
-        https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
-    '''
-    return ((size[-2] - (kernel_size[-2] - 1) - 1) // stride + 1,
-            (size[-1] - (kernel_size[-1] - 1) - 1) // stride + 1)
+    """Adapted from pytorch tutorials:
+    https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
+    """
+    return (
+        (size[-2] - (kernel_size[-2] - 1) - 1) // stride + 1,
+        (size[-1] - (kernel_size[-1] - 1) - 1) // stride + 1,
+    )
+
 
 def build_activation(ac, layer_shape):
+    ac = get_activation_fn(ac)
     if isinstance(ac, partial):
         ac = ac(layer_shape)
     elif isinstance(ac, type):
         ac = ac()
     return ac
+
 
 class Reshape(torch.nn.Module):
     """Module that returns a view of the input which has a different size
@@ -35,13 +41,14 @@ class Reshape(torch.nn.Module):
     args : int...
         The desired size
     """
+
     def __init__(self, *args):
         super().__init__()
         self.shape = args
 
     def __repr__(self):
         s = self.__class__.__name__
-        s += '{}'.format(self.shape)
+        s += "{}".format(self.shape)
         return s
 
     def forward(self, input):
@@ -50,19 +57,20 @@ class Reshape(torch.nn.Module):
         except RuntimeError:
             return input.reshape(*self.shape)
 
+
 class Module(torch.nn.Module):
-    """Module that, when printed, shows its total number of parameters
-    """
+    """Module that, when printed, shows its total number of parameters"""
+
     def __init__(self):
         super().__init__()
         self.frozen = False
 
     def __str__(self):
-        s = super().__str__() + '\n'
+        s = super().__str__() + "\n"
         n_params = 0
         for p in self.parameters():
             n_params += np.prod(p.size())
-        s += 'Total params: {}'.format(n_params)
+        s += "Total params: {}".format(n_params)
         return s
 
     def print_summary(self):
@@ -71,16 +79,16 @@ class Module(torch.nn.Module):
 
     def save(self, name, model_dir, is_best=False):
         os.makedirs(model_dir, exist_ok=True)
-        model_file = os.path.join(model_dir, '{}_latest.ckpt'.format(name))
+        model_file = os.path.join(model_dir, "{}_latest.ckpt".format(name))
         torch.save(self.state_dict(), model_file)
-        logging.info('Model saved to {}'.format(model_file))
+        logging.info("Model saved to {}".format(model_file))
         if is_best:
-            best_file = os.path.join(model_dir, '{}_best.ckpt'.format(name))
+            best_file = os.path.join(model_dir, "{}_best.ckpt".format(name))
             shutil.copyfile(model_file, best_file)
-            logging.info('New best model! Model copied to {}'.format(best_file))
+            logging.info("New best model! Model copied to {}".format(best_file))
 
     def load(self, model_file, to: torch.device = None):
-        logging.info('Loading model from {}...'.format(model_file))
+        logging.info("Loading model from {}...".format(model_file))
         state_dict = torch.load(model_file, map_location=to)
         self.load_state_dict(state_dict)
 
@@ -112,10 +120,14 @@ class Module(torch.nn.Module):
             alpha: interpolation parameter, usually small (e.g. 0.0001)
         """
         for theta_dest, theta_src in zip(self.parameters(), other.parameters()):
-            theta_dest.data.copy_(alpha * theta_src.data + (1.0 - alpha) * theta_dest.data)
+            theta_dest.data.copy_(
+                alpha * theta_src.data + (1.0 - alpha) * theta_dest.data
+            )
+
 
 class Sequential(torch.nn.Sequential, Module):
     pass
+
 
 class Identity(Module):
     def __init__(self):
@@ -126,11 +138,14 @@ class Identity(Module):
     def forward(self, args):
         return args
 
-def attention(query: torch.Tensor,
-              key: torch.Tensor,
-              value: torch.Tensor,
-              attn_mask: torch.Tensor = None,
-              dropout_p: float = 0.0):
+
+def attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: torch.Tensor = None,
+    dropout_p: float = 0.0,
+):
     """
     Computes scaled dot product attention on query, key and value tensors, using
     an optional attention mask if passed, and applying dropout if a probability
@@ -150,6 +165,7 @@ def attention(query: torch.Tensor,
         attn = dropout(attn, p=dropout_p)
     return torch.matmul(attn, value), attn
 
+
 def one_hot(x: torch.Tensor, depth: int, dtype=torch.float32):
     """Convert a tensor of indices to a tensor of one-hot vectors, adding a dimension at the end
 
@@ -158,7 +174,7 @@ def one_hot(x: torch.Tensor, depth: int, dtype=torch.float32):
     depth : int
         The length of each output vector
     """
-    is_batch = (x.dim() > 0)
+    is_batch = x.dim() > 0
     if not is_batch:
         x = x.unsqueeze(0)
     i = x.unsqueeze(-1).expand(*x.shape, depth)
@@ -167,36 +183,39 @@ def one_hot(x: torch.Tensor, depth: int, dtype=torch.float32):
         result = result.squeeze(0)
     return result
 
+
 def extract(input, idx, idx_dim, batch_dim=0):
-    '''
-Extracts slices of input tensor along idx_dim at positions
-specified by idx.
+    """
+    Extracts slices of input tensor along idx_dim at positions
+    specified by idx.
 
-Notes:
-    idx must have the same size as input.shape[batch_dim].
-    Output tensor has the shape of input with idx_dim removed.
+    Notes:
+        idx must have the same size as input.shape[batch_dim].
+        Output tensor has the shape of input with idx_dim removed.
 
-Args:
-    input (Tensor): the source tensor
-    idx (LongTensor): the indices of slices to extract
-    idx_dim (int): the dimension along which to extract slices
-    batch_dim (int): the dimension to treat as the batch dimension
+    Args:
+        input (Tensor): the source tensor
+        idx (LongTensor): the indices of slices to extract
+        idx_dim (int): the dimension along which to extract slices
+        batch_dim (int): the dimension to treat as the batch dimension
 
-Example::
+    Example::
 
-    >>> t = torch.arange(24, dtype=torch.float32).view(3,4,2)
-    >>> i = torch.tensor([1, 3, 0], dtype=torch.int64)
-    >>> extract(t, i, idx_dim=1, batch_dim=0)
-        tensor([[ 2.,  3.],
-                [14., 15.],
-                [16., 17.]])
-'''
+        >>> t = torch.arange(24, dtype=torch.float32).view(3,4,2)
+        >>> i = torch.tensor([1, 3, 0], dtype=torch.int64)
+        >>> extract(t, i, idx_dim=1, batch_dim=0)
+            tensor([[ 2.,  3.],
+                    [14., 15.],
+                    [16., 17.]])
+    """
     if idx_dim == batch_dim:
-        raise RuntimeError('idx_dim cannot be the same as batch_dim')
+        raise RuntimeError("idx_dim cannot be the same as batch_dim")
     if len(idx) != input.shape[batch_dim]:
         raise RuntimeError(
             "idx length '{}' not compatible with batch_dim '{}' for input shape '{}'".format(
-                len(idx), batch_dim, list(input.shape)))
+                len(idx), batch_dim, list(input.shape)
+            )
+        )
     viewshape = [
         1,
     ] * input.ndimension()
@@ -204,3 +223,16 @@ Example::
     idx = idx.view(*viewshape).expand_as(input)
     result = torch.gather(input, idx_dim, idx).mean(dim=idx_dim)
     return result
+
+
+def get_activation_fn(act: str) -> Activation:
+    # get list from activation submodule as lower-case
+    activations_lc = [str(a).lower() for a in activation.__all__]
+    if (act := str(act).lower()) in activations_lc:
+        # match actual name from lower-case list, return function/factory
+        idx = activations_lc.index(act)
+        act_name = activation.__all__[idx]
+        act_func = getattr(activation, act_name)
+        return act_func
+    else:
+        raise ValueError(f"Cannot find activation function for string <{act}>")

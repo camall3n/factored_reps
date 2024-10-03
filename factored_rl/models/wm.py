@@ -181,7 +181,7 @@ class FactorCascade(Module):
         if self.add_input_skip_connection:
             outputs.append(x)
 
-        for i, model in self.models:
+        for i, model in enumerate(self.models):
             x_masked = torch.concat((x[..., :i + 1], torch.zeros_like(x[..., i + 1:])), dim=-1)
             outputs.append(model(x_masked)) # (B, k)
 

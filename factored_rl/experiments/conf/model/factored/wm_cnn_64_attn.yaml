@@ -12,10 +12,8 @@ wm:
   mlp:
     n_hidden_layers: 1
     n_units_per_layer: 64
-    activation:
-      - _target_: torch.nn.ReLU
-    final_activation:
-      - _target_: torch.nn.Tanh
+    activation: relu
+    final_activation: tanh
   attn:
     key_embed_dim: 20
     action_embed_dim: 4

@@ -6,7 +6,8 @@ import torch
 import torch.nn
 
 from factored_rl import configs
-from .nnutils import Module, ActivationType, build_activation
+from .nnutils import Module, build_activation
+
 
 class CNN(Module):
     def __init__(
@@ -17,11 +18,11 @@ class CNN(Module):
             strides: Optional[Union[int, List[int]]] = None, # default=1
             padding: Optional[Union[int, List[int]]] = None, # default=0
             dilations: Optional[Union[int, List[int]]] = None, # default=1
-            activation: Optional[ActivationType] = torch.nn.ReLU, # activation or list thereof for internal layers
-            final_activation: Optional[ActivationType] = torch.nn.ReLU, # activation or list thereof for final layer
+            activation: str = 'relu', # activation or list thereof for internal layers
+            final_activation: str = 'relu', # activation or list thereof for final layer
             transpose: bool = False,
             layer_shapes: Optional[List[Tuple[int]]] = None,
-        **kwargs): # yapf: disable
+        **kwargs):  # yapf: disable
         super().__init__()
         input_shape = tuple(input_shape)
         self.input_shape = input_shape
@@ -32,22 +33,26 @@ class CNN(Module):
         elif len(input_shape) == 3:
             self.n_input_channels = input_shape[0]
             if input_shape[0] == input_shape[1] and input_shape[1] > input_shape[2]:
-                warnings.warn('Input shape {input_shape} might be backwards. Should be (C, H, W).')
+                warnings.warn(
+                    "Input shape {input_shape} might be backwards. Should be (C, H, W)."
+                )
         else:
-            raise ValueError('input_shape must be either 2D or 3D')
+            raise ValueError("input_shape must be either 2D or 3D")
 
         self.n_layers = len(n_output_channels)
-        n_channels = (self.n_input_channels, ) if self.n_input_channels > 0 else (1, )
+        n_channels = (self.n_input_channels,) if self.n_input_channels > 0 else (1,)
         n_channels = n_channels + tuple(n_output_channels)
         self.n_output_channels = n_channels[-1]
 
-        kernel_sizes = self._list_of_values(kernel_sizes, 'kernel_sizes', default_value=None)
-        strides = self._list_of_values(strides, 'strides', default_value=1)
-        dilations = self._list_of_values(dilations, 'dilations', default_value=1)
+        kernel_sizes = self._list_of_values(
+            kernel_sizes, "kernel_sizes", default_value=None
+        )
+        strides = self._list_of_values(strides, "strides", default_value=1)
+        dilations = self._list_of_values(dilations, "dilations", default_value=1)
         if isinstance(padding, str):
             padding = [padding] * self.n_layers
         else:
-            padding = self._list_of_values(padding, 'padding', default_value=0)
+            padding = self._list_of_values(padding, "padding", default_value=0)
 
         # build list of lists of activations
         if not isinstance(activation, List):
@@ -66,7 +71,7 @@ class CNN(Module):
         self.layers = []
         conv_layers = []
         if layer_shapes is None:
-            self.layer_shapes = [(1, ) + input_shape if self.n_input_channels == 0 else input_shape] # yapf:disable
+            self.layer_shapes = [(1, ) + input_shape if self.n_input_channels == 0 else input_shape]  # yapf:disable
         else:
             self.layer_shapes = layer_shapes
         for i in range(self.n_layers):
@@ -87,33 +92,38 @@ class CNN(Module):
                 out_shape = self._conv2d_size(self.layer_shapes[i], conv, transpose)
                 self.layer_shapes.append(out_shape)
             for ac in activations[i]:
-                if ac is not None:
+                if ac:
                     self.layers.append(build_activation(ac, out_shape))
 
         self.output_shape = self.layer_shapes[-1]
         assert self.output_shape[0] == self.n_output_channels
         if not all(np.array(self.output_shape) >= 1):
             raise ValueError(
-                f'The specified CNN has invalid output shape: {self.output_shape}\n'
-                f'\n'
-                f'Layer shapes:\n' +
-                f'\n'.join([f'  {i:2d}. {shape}' for i, shape in enumerate(self.layer_shapes)]))
+                f"The specified CNN has invalid output shape: {self.output_shape}\n"
+                f"\n"
+                f"Layer shapes:\n"
+                + f"\n".join(
+                    [f"  {i:2d}. {shape}" for i, shape in enumerate(self.layer_shapes)]
+                )
+            )
 
         self.model = torch.nn.Sequential(*self.layers)
 
     @classmethod
     def from_config(cls, input_shape, cfg: configs.CNNConfig):
-        assert len(input_shape) in [2, 3], 'CNN input_shape must be 2D or 3D'
+        assert len(input_shape) in [2, 3], "CNN input_shape must be 2D or 3D"
         if input_shape[-2:] != cfg.cnn.supported_2d_input_shape:
-            raise ValueError(f'Input shape {input_shape} does not match supported 2D input shape: '
-                             f'{cfg.cnn.supported_2d_input_shape}')
+            raise ValueError(
+                f"Input shape {input_shape} does not match supported 2D input shape: "
+                f"{cfg.cnn.supported_2d_input_shape}"
+            )
         return cls(
             input_shape=input_shape,
             n_output_channels=cfg.cnn.n_output_channels,
             kernel_sizes=cfg.cnn.kernel_sizes,
             strides=cfg.cnn.strides,
-            activation=configs.instantiate(cfg.cnn.activation),
-            final_activation=configs.instantiate(cfg.cnn.final_activation),
+            activation=cfg.cnn.activation,
+            final_activation=cfg.cnn.final_activation,
         )
 
     def forward(self, x):
@@ -131,10 +141,16 @@ class CNN(Module):
         return x
 
     def print_layers(self):
-        print(f'Layer shapes:\n' +
-              f'\n'.join([f'  {i:2d}. {shape}' for i, shape in enumerate(self.layer_shapes)]))
+        print(
+            f"Layer shapes:\n"
+            + f"\n".join(
+                [f"  {i:2d}. {shape}" for i, shape in enumerate(self.layer_shapes)]
+            )
+        )
 
-    def _list_of_values(self, value: Union[int, List[int]], argname: str, default_value: int):
+    def _list_of_values(
+        self, value: Union[int, List[int]], argname: str, default_value: int
+    ):
         """
         Ensure value is a list of ints, repeating it if necessary, to a length self.n_layers
         """
@@ -143,18 +159,20 @@ class CNN(Module):
         elif isinstance(value, int):
             value_list = [value] * self.n_layers
         elif len(value) != self.n_layers:
-            assert isinstance(value, int), f'Invalid {argname} value: {value}'
+            assert isinstance(value, int), f"Invalid {argname} value: {value}"
             value_list = [value] * self.n_layers
         else:
             value_list = list(value)
             for i, val in enumerate(value_list):
                 assert isinstance(
-                    val,
-                    int), f'Expected {argname} list to be integers, but item {i} was not: {val}'
+                    val, int
+                ), f"Expected {argname} list to be integers, but item {i} was not: {val}"
         assert len(value_list) == self.n_layers
         return value_list
 
-    def _conv2d_size(self, input_shape: Tuple[int], layer: torch.nn.Conv2d, transpose=False):
+    def _conv2d_size(
+        self, input_shape: Tuple[int], layer: torch.nn.Conv2d, transpose=False
+    ):
         """
         Compute the output shape after applying the Conv2d layer to the input shape
         """
@@ -173,7 +191,9 @@ class CNN(Module):
         return (c_out, h_out, w_out)
 
     @staticmethod
-    def _conv1d_size(v_in: int, kernel: int, stride: int = 1, dilation: int = 1, pad: int = 0):
+    def _conv1d_size(
+        v_in: int, kernel: int, stride: int = 1, dilation: int = 1, pad: int = 0
+    ):
         """
         Compute the linear size associated with a 1D convolution operation
 
@@ -184,7 +204,9 @@ class CNN(Module):
         return int(np.floor(float_out))
 
     @staticmethod
-    def _conv1d_size_T(v_out: int, kernel: int, stride: int = 1, dilation: int = 1, pad: int = 0):
+    def _conv1d_size_T(
+        v_out: int, kernel: int, stride: int = 1, dilation: int = 1, pad: int = 0
+    ):
         """
         Compute the linear size associated with a 1D transposed convolution operation
         """

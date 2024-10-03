@@ -9,122 +9,157 @@ from factored_rl import configs
 import gym
 from gym.wrappers import FlattenObservation
 from visgrid.envs import GridworldEnv, TaxiEnv
-from factored_rl.wrappers import RotationWrapper, FactorPermutationWrapper, ObservationPermutationWrapper
-from factored_rl.wrappers import MoveAxisToCHW, PolynomialBasisWrapper, FourierBasisWrapper, LegendreBasisWrapper
-from visgrid.wrappers import GrayscaleWrapper, InvertWrapper, ToFloatWrapper, NormalizeWrapper, NoiseWrapper, ClipWrapper
+from factored_rl.wrappers import (
+    RotationWrapper,
+    FactorPermutationWrapper,
+    ObservationPermutationWrapper,
+)
+from factored_rl.wrappers import (
+    MoveAxisToCHW,
+    PolynomialBasisWrapper,
+    FourierBasisWrapper,
+    LegendreBasisWrapper,
+)
+from visgrid.wrappers import (
+    GrayscaleWrapper,
+    InvertWrapper,
+    ToFloatWrapper,
+    NormalizeWrapper,
+    NoiseWrapper,
+    ClipWrapper,
+)
 
 # Model
-from factored_rl.models.ae import BaseModel, EncoderModel, AutoencoderModel, PairedAutoencoderModel
+from factored_rl.models.ae import (
+    BaseModel,
+    EncoderModel,
+    AutoencoderModel,
+    PairedAutoencoderModel,
+)
 from factored_rl.models.wm import WorldModel
+from factored_rl.models.acf import ACFModel
 from factored_rl.models.disent import build_disent_model
 
 # ----------------------------------------
 # Environment & wrappers
 # ----------------------------------------
 
+
 def initialize_env(cfg: configs.Config, seed: int = None):
-    if cfg.env.name == 'gridworld':
-        env = GridworldEnv(10,
-                           10,
-                           exploring_starts=cfg.env.exploring_starts,
-                           terminate_on_goal=True,
-                           fixed_goal=cfg.env.fixed_goal,
-                           hidden_goal=True,
-                           should_render=False)
-    elif cfg.env.name == 'taxi':
-        if cfg.script in ['factorize', 'disent_vs_rep']:
+    if cfg.env.name == "gridworld":
+        env = GridworldEnv(
+            10,
+            10,
+            exploring_starts=cfg.env.exploring_starts,
+            terminate_on_goal=True,
+            fixed_goal=cfg.env.fixed_goal,
+            hidden_goal=True,
+            should_render=False,
+        )
+    elif cfg.env.name == "taxi":
+        if cfg.script in ["factorize", "disent_vs_rep"]:
             cfg.env.depot_dropoff_only = False
-        elif cfg.script == 'rl_vs_rep':
+        elif cfg.script == "rl_vs_rep":
             cfg.env.depot_dropoff_only = True
-        env = TaxiEnv(size=5,
-                      n_passengers=1,
-                      exploring_starts=cfg.env.exploring_starts,
-                      terminate_on_goal=True,
-                      fixed_goal=cfg.env.fixed_goal,
-                      depot_dropoff_only=cfg.env.depot_dropoff_only,
-                      should_render=False,
-                      render_fast=cfg.env.render_fast)
+        env = TaxiEnv(
+            size=5,
+            n_passengers=1,
+            exploring_starts=cfg.env.exploring_starts,
+            terminate_on_goal=True,
+            fixed_goal=cfg.env.fixed_goal,
+            depot_dropoff_only=cfg.env.depot_dropoff_only,
+            should_render=False,
+            render_fast=cfg.env.render_fast,
+        )
     else:
         env = gym.make(cfg.env.name)
         # TODO: wrap env to support disent protocol
-        raise NotImplementedError('Need to wrap env to support disent protocol')
+        raise NotImplementedError("Need to wrap env to support disent protocol")
 
     env.reset(seed=seed)
     env.action_space.seed(seed)
 
-    if cfg.transform.name == 'images':
+    if cfg.transform.name == "images":
         env.set_rendering(enabled=True)
         if cfg.env.grayscale:
             env = GrayscaleWrapper(env, keep_dim=True)
-        if cfg.env.name == 'gridworld':
+        if cfg.env.name == "gridworld":
             env = InvertWrapper(env)
-        if cfg.model.arch.encoder == 'mlp':
+        if cfg.model.arch.encoder == "mlp":
             env = FlattenObservation(env)
-        elif cfg.model.arch.encoder == 'cnn':
+        elif cfg.model.arch.encoder == "cnn":
             env = MoveAxisToCHW(env)
     else:
-        if cfg.transform.name == 'permute_factors':
+        if cfg.transform.name == "permute_factors":
             env = FactorPermutationWrapper(env)
-        elif cfg.transform.name == 'permute_states':
+        elif cfg.transform.name == "permute_states":
             env = ObservationPermutationWrapper(env)
         env = NormalizeWrapper(ToFloatWrapper(env), -1, 1)
-        if cfg.transform.name == 'rotate':
+        if cfg.transform.name == "rotate":
             env = RotationWrapper(env)
     if cfg.transform.noise:
         env = NoiseWrapper(env, cfg.transform.noise_std)
-        if cfg.transform.name == 'images':
-            env = ClipWrapper(env, 0., 1.)
+        if cfg.transform.name == "images":
+            env = ClipWrapper(env, 0.0, 1.0)
         else:
-            env = ClipWrapper(env, -1., 1.)
+            env = ClipWrapper(env, -1.0, 1.0)
     env = ToFloatWrapper(env)
     if cfg.transform.basis.name is not None:
         known_bases = {
-            'polynomial': PolynomialBasisWrapper,
-            'legendre': LegendreBasisWrapper,
-            'fourier': FourierBasisWrapper,
+            "polynomial": PolynomialBasisWrapper,
+            "legendre": LegendreBasisWrapper,
+            "fourier": FourierBasisWrapper,
         }
         if cfg.transform.basis.name not in known_bases:
             raise NotImplementedError(
-                f'Unknown basis type "{cfg.transform.basis.name}" not in {known_bases}')
+                f'Unknown basis type "{cfg.transform.basis.name}" not in {known_bases}'
+            )
         else:
             env = known_bases[cfg.transform.basis.name](env, cfg.transform.basis.rank)
     return env
 
+
 def initialize_model(input_shape, n_actions, cfg: configs.Config):
-    if cfg.model.lib == 'disent':
+    if cfg.model.lib == "disent":
         return build_disent_model(input_shape, cfg)
     elif cfg.model.name is not None:
         if cfg.model.param_scaling > 1:
             scale = cfg.model.param_scaling
-            print(f'Scaling up model parameters by {scale}x')
+            print(f"Scaling up model parameters by {scale}x")
             # scale MLP n_units_per_layer
-            if cfg.model.mlp.get('n_units_per_layer', None) is not None:
+            if cfg.model.mlp.get("n_units_per_layer", None) is not None:
                 n_units = cfg.model.mlp.n_units_per_layer
                 cfg.model.mlp.n_units_per_layer = scale * n_units
             # scale CNN n_output_channels
-            if cfg.model.cnn.get('n_output_channels', None) is not None:
+            if cfg.model.cnn.get("n_output_channels", None) is not None:
                 n_chans = cfg.model.cnn.n_output_channels
                 cfg.model.cnn.n_output_channels = [scale * n_chan for n_chan in n_chans]
             # reset param_scaling to avoid double-scaling confusion later
             cfg.model.param_scaling = 1
 
-        if cfg.model.arch.type == 'qnet':
+        if cfg.model.arch.type == "qnet":
             module = BaseModel
-        elif cfg.model.arch.type == 'enc':
+        elif cfg.model.arch.type == "enc":
             module = EncoderModel
-        elif cfg.model.arch.type == 'ae':
+        elif cfg.model.arch.type == "ae":
             module = AutoencoderModel
-        elif cfg.model.arch.type == 'paired_ae':
+        elif cfg.model.arch.type == "paired_ae":
             module = PairedAutoencoderModel
-        elif cfg.model.arch.type == 'wm':
+        elif cfg.model.arch.type == "wm":
             module = WorldModel
+        elif cfg.model.arch.type == "acf":
+            module = ACFModel
         else:
-            raise NotImplementedError(f'Unknown model architecture: {cfg.model.arch.type}')
+            raise NotImplementedError(
+                f"Unknown model architecture: {cfg.model.arch.type}"
+            )
 
-        module_args = {'input_shape': input_shape, 'n_actions': n_actions, 'cfg': cfg}
+        module_args = {"input_shape": input_shape, "n_actions": n_actions, "cfg": cfg}
         if cfg.loader.load_model:
             cfg.loader.checkpoint_path = get_checkpoint_path(cfg)
-            model = module.load_from_checkpoint(cfg.loader.checkpoint_path, **module_args)
+            model = module.load_from_checkpoint(
+                cfg.loader.checkpoint_path, **module_args
+            )
             if cfg.loader.eval_only:
                 model.eval()
                 model.encoder.freeze()
@@ -135,12 +170,15 @@ def initialize_model(input_shape, n_actions, cfg: configs.Config):
     model = model.to(cfg.model.device)
     return model
 
-def get_checkpoint_path(cfg, logs_dirname='lightning_logs', create_new_version=False):
+
+def get_checkpoint_path(cfg, logs_dirname="lightning_logs", create_new_version=False):
     if cfg.loader.checkpoint_path is None:
-        experiment = cfg.experiment if cfg.loader.experiment is None else cfg.loader.experiment
+        experiment = (
+            cfg.experiment if cfg.loader.experiment is None else cfg.loader.experiment
+        )
         trial = cfg.trial if cfg.loader.trial is None else cfg.loader.trial
-        seed = f'{cfg.seed if cfg.loader.seed is None else cfg.loader.seed:04d}'
-        load_dir = os.path.join('/', *cfg.dir.split('/')[:-4], experiment, trial, seed)
+        seed = f"{cfg.seed if cfg.loader.seed is None else cfg.loader.seed:04d}"
+        load_dir = os.path.join("/", *cfg.dir.split("/")[:-4], experiment, trial, seed)
         logger = TensorBoardLogger(save_dir=load_dir, name=logs_dirname)
         if cfg.loader.version is None:
             version = logger.version - 1
@@ -148,18 +186,23 @@ def get_checkpoint_path(cfg, logs_dirname='lightning_logs', create_new_version=F
                 version += 1
         else:
             version = cfg.loader.version
-        checkpoint_dir = os.path.join(load_dir, f'{logs_dirname}/version_{version}/checkpoints/')
-        checkpoints = glob.glob(os.path.join(checkpoint_dir, 'last.ckpt'))
+        checkpoint_dir = os.path.join(
+            load_dir, f"{logs_dirname}/version_{version}/checkpoints/"
+        )
+        checkpoints = glob.glob(os.path.join(checkpoint_dir, "last.ckpt"))
         if checkpoints == []:
-            checkpoints = glob.glob(os.path.join(checkpoint_dir, '*.ckpt'))
+            checkpoints = glob.glob(os.path.join(checkpoint_dir, "*.ckpt"))
         if len(checkpoints) > 1:
-            raise RuntimeError(f'Multiple checkpoints detected in {checkpoint_dir}\n'
-                               f'Please specify model.checkpoint_path')
+            raise RuntimeError(
+                f"Multiple checkpoints detected in {checkpoint_dir}\n"
+                f"Please specify model.checkpoint_path"
+            )
         elif len(checkpoints) == 1:
             ckpt_path = checkpoints[0]
         elif create_new_version:
             ckpt_path = checkpoint_dir
         return ckpt_path
+
 
 def cpu_count():
     # os.cpu_count(): returns number of cores on machine

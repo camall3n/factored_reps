@@ -10,13 +10,11 @@ flatten_input: true
 mlp:
   n_hidden_layers: 1
   n_units_per_layer: 64
-  activation:
-    - _target_: torch.nn.Tanh
-  final_activation: null
+  activation: "tanh"
+  final_activation: ""
 n_latent_dims: 10
 qnet:
   n_hidden_layers: 1
   n_units_per_layer: 64
-  activation:
-    - _target_: torch.nn.ReLU
-  final_activation: null
+  activation: "relu"
+  final_activation: ""

@@ -11,6 +11,7 @@ from factored_rl.models.nnutils import Sequential, Reshape, one_hot
 from factored_rl.models import Network, MLP, CNN, losses
 from factored_rl.wrappers import basis
 
+
 class BaseModel(pl.LightningModule):
     def __init__(self, input_shape: Tuple, n_actions: int, cfg: configs.Config):
         super().__init__()
@@ -32,25 +33,30 @@ class BaseModel(pl.LightningModule):
             self.n_features = self.n_latent_dims
         else:
             known_bases = {
-                'polynomial': basis.PolynomialBasisFunction,
-                'legendre': basis.LegendreBasisFunction,
-                'fourier': basis.FourierBasisFunction,
+                "polynomial": basis.PolynomialBasisFunction,
+                "legendre": basis.LegendreBasisFunction,
+                "fourier": basis.FourierBasisFunction,
             }
             if basis_name not in known_bases:
                 raise NotImplementedError(
-                    f'Unknown basis type "{basis_name}" not in {known_bases}')
+                    f'Unknown basis type "{basis_name}" not in {known_bases}'
+                )
 
             basis_type = known_bases[basis_name]
-            self.basis: basis.BasisFunction = basis_type(self.n_latent_dims,
-                                                         self.cfg.model.qnet.basis.rank)
+            self.basis: basis.BasisFunction = basis_type(
+                self.n_latent_dims, self.cfg.model.qnet.basis.rank
+            )
 
     def initialize_qnet(self):
         n_inputs = self.n_latent_dims if (self.basis is None) else self.basis.n_features
         if self.cfg.model.qnet is not None:
             if (self.basis is not None) and (self.cfg.model.qnet.n_hidden_layers > 0):
-                raise RuntimeError('Expected qnet head to be linear when using basis function')
+                raise RuntimeError(
+                    "Expected qnet head to be linear when using basis function"
+                )
 
             self.qnet = MLP.from_config(n_inputs, self.n_actions, self.cfg.model.qnet)
+
 
 class EncoderModel(BaseModel):
     def __init__(self, input_shape: Tuple, n_actions: int, cfg: configs.Config):
@@ -60,6 +66,7 @@ class EncoderModel(BaseModel):
     def process_configs(self):
         self.n_latent_dims = self.cfg.model.n_latent_dims
         self.output_shape = self.n_latent_dims
+
 
 class AutoencoderModel(EncoderModel):
     def __init__(self, input_shape: Tuple, n_actions: int, cfg: configs.Config):
@@ -82,7 +89,7 @@ class AutoencoderModel(EncoderModel):
                 # https://math.stackexchange.com/questions/106700/incremental-averaging
                 #   m_n = m_{n-1} + (k/n) * (a_n - m_{n-1})
                 self.n_inputs_observed += n_inputs
-                update_fraction = (n_inputs / self.n_inputs_observed)
+                update_fraction = n_inputs / self.n_inputs_observed
                 self.mean_input += update_fraction * (x.mean(dim=0) - self.mean_input)
 
     def encode(self, x):
@@ -91,7 +98,9 @@ class AutoencoderModel(EncoderModel):
         return self.encoder(x)
 
     def decode(self, z):
-        final_activation = torch.sigmoid if self.cfg.model.arch.decoder == 'cnn' else lambda x: x
+        final_activation = (
+            torch.sigmoid if self.cfg.model.arch.decoder == "cnn" else lambda x: x
+        )
         x_hat = final_activation(self.decoder(z))
         if self.subtract_mean_input:
             x_hat = x_hat + self.mean_input
@@ -103,18 +112,20 @@ class AutoencoderModel(EncoderModel):
         z = self.encode(x)
         x_hat = self.decode(z)
         loss = torch.nn.functional.mse_loss(input=x_hat, target=x)
-        self.log('loss/reconst', loss)
+        self.log("loss/reconst", loss)
         if self.global_step % self.cfg.trainer.log_every_n_steps == 0:
-            self.log_images(x, x_hat, 'img/obs_reconst_diff')
+            self.log_images(x, x_hat, "img/obs_reconst_diff")
 
-        self.prune_if_necessary({'loss/reconst': loss})
+        self.prune_if_necessary({"loss/reconst": loss})
         return loss
 
-    def log_images(self, obs: Tensor, obs_hat: Tensor, log_str='img/obs_reconst_diff'):
-        if self.cfg.transform.name == 'images':
+    def log_images(self, obs: Tensor, obs_hat: Tensor, log_str="img/obs_reconst_diff"):
+        if self.cfg.transform.name == "images":
             # stack images along H dimension
             N = min(24, len(obs))
-            obs_stack = torch.cat((obs[:N], obs_hat[:N], (obs[:N] - obs_hat[:N])), dim=2)
+            obs_stack = torch.cat(
+                (obs[:N], obs_hat[:N], (obs[:N] - obs_hat[:N])), dim=2
+            )
             tensorboard = self.logger.experiment
             # The following add_images() calls crash intermittently, due to a matplotlib issue:
             # https://github.com/Lightning-AI/lightning/issues/11925#issuecomment-1111727962
@@ -124,13 +135,16 @@ class AutoencoderModel(EncoderModel):
             plt.pause(0.1)
 
     def prune_if_necessary(self, losses: Dict):
-        if self.cfg.tuner.tune_rep and self.cfg.tuner.tune_metric == 'reconst':
-            self.trial.report(losses['loss/reconst'], step=self.global_step)
+        if self.cfg.tuner.tune_rep and self.cfg.tuner.tune_metric == "reconst":
+            self.trial.report(losses["loss/reconst"], step=self.global_step)
             if self.trial.should_prune():
                 raise optuna.TrialPruned()
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.cfg.trainer.rep_learning_rate)
+        return torch.optim.AdamW(
+            self.parameters(), lr=self.cfg.trainer.rep_learning_rate
+        )
+
 
 class PairedAutoencoderModel(AutoencoderModel):
     def __init__(self, input_shape: Tuple, n_actions: int, cfg: configs.Config):
@@ -138,18 +152,19 @@ class PairedAutoencoderModel(AutoencoderModel):
         self.n_actions = n_actions
         assert cfg.model.action_sampling is not None
         distance_modes = {
-            'mse': torch.nn.functional.mse_loss,
+            "mse": torch.nn.functional.mse_loss,
         }
         if self.cfg.loss.distance not in distance_modes:
             raise RuntimeError(
-                f"Distance mode {self.cfg.loss.distance} not in {list(distance_modes.keys())}")
+                f"Distance mode {self.cfg.loss.distance} not in {list(distance_modes.keys())}"
+            )
         self.distance = distance_modes[self.cfg.loss.distance]
 
     def training_step(self, batch, batch_idx):
-        ob = batch['ob']
+        ob = batch["ob"]
         self.update_mean_input(ob)
-        actions = one_hot(batch['action'], self.n_actions)
-        next_ob = batch['next_ob']
+        actions = one_hot(batch["action"], self.n_actions)
+        next_ob = batch["next_ob"]
         self.update_mean_input(next_ob)
         z = self.encode(ob)
         next_z = self.encode(next_ob)
@@ -157,17 +172,17 @@ class PairedAutoencoderModel(AutoencoderModel):
         ob_hat = self.decode(z)
         next_ob_hat = self.decode(next_z)
         losses = {
-            'actions': self.action_semantics_loss(actions, effects),
-            'effects': self.effects_loss(effects),
-            'reconst': self.reconstruction_loss(ob, next_ob, ob_hat, next_ob_hat),
+            "actions": self.action_semantics_loss(actions, effects),
+            "effects": self.effects_loss(effects),
+            "reconst": self.reconstruction_loss(ob, next_ob, ob_hat, next_ob_hat),
         }
         loss = sum([losses[key] * self.cfg.loss[key] for key in losses.keys()])
-        losses = {('loss/' + key): value for key, value in losses.items()}
-        losses['loss/train_loss'] = loss
+        losses = {("loss/" + key): value for key, value in losses.items()}
+        losses["loss/train_loss"] = loss
         self.log_dict(losses)
         if self.global_step % self.cfg.trainer.log_every_n_steps == 0:
-            self.log_images(ob, ob_hat, 'img/obs_reconst_diff')
-            self.log_images(next_ob, next_ob_hat, 'img/next_obs_reconst_diff')
+            self.log_images(ob, ob_hat, "img/obs_reconst_diff")
+            self.log_images(next_ob, next_ob_hat, "img/next_obs_reconst_diff")
 
         self.prune_if_necessary(losses)
         return loss
@@ -180,12 +195,17 @@ class PairedAutoencoderModel(AutoencoderModel):
 
     def _get_action_residuals(self, actions: Tensor, effects: Tensor):
         if actions.dim() != 2:
-            raise ValueError(f'actions must be a 2-D one-hot tensor; got dim = {actions.dim()}')
-        action_mask = actions.unsqueeze(-1) #(N,A,1)
-        action_effects = action_mask * effects.unsqueeze(dim=1) #(N,1,d)
-        mean_action_effects = (action_effects.sum(dim=0, keepdim=True) /
-                               (action_mask.sum(dim=0, keepdim=True) + 1e-9)) #(1,A,d)
-        action_residuals = ((action_effects - mean_action_effects) * action_mask).sum(dim=1) #(N,d)
+            raise ValueError(
+                f"actions must be a 2-D one-hot tensor; got dim = {actions.dim()}"
+            )
+        action_mask = actions.unsqueeze(-1)  # (N,A,1)
+        action_effects = action_mask * effects.unsqueeze(dim=1)  # (N,1,d)
+        mean_action_effects = action_effects.sum(dim=0, keepdim=True) / (
+            action_mask.sum(dim=0, keepdim=True) + 1e-9
+        )  # (1,A,d)
+        action_residuals = ((action_effects - mean_action_effects) * action_mask).sum(
+            dim=1
+        )  # (N,d)
         return action_residuals
 
     def action_semantics_loss(self, actions: Tensor, effects: Tensor):
@@ -195,38 +215,43 @@ class PairedAutoencoderModel(AutoencoderModel):
         actions_loss = losses.compute_sparsity(action_residuals, self.cfg.loss.sparsity)
         return actions_loss
 
-    def reconstruction_loss(self, ob: Tensor, next_ob: Tensor, ob_hat: Tensor,
-                            next_ob_hat: Tensor):
+    def reconstruction_loss(
+        self, ob: Tensor, next_ob: Tensor, ob_hat: Tensor, next_ob_hat: Tensor
+    ):
         if self.cfg.loss.reconst == 0:
             return 0.0
-        reconst_loss = (self.distance(input=ob_hat, target=ob) +
-                        self.distance(input=next_ob_hat, target=next_ob)) / 2
+        reconst_loss = (
+            self.distance(input=ob_hat, target=ob)
+            + self.distance(input=next_ob_hat, target=next_ob)
+        ) / 2
         return reconst_loss
+
 
 class EncoderNet(Network):
     def forward(self, x):
-        is_batched = (tuple(x.shape) != tuple(self.input_shape))
+        is_batched = tuple(x.shape) != tuple(self.input_shape)
         x = super().forward(x)
         if not is_batched:
             x = torch.squeeze(x, 0)
         return x
 
+
 class DecoderNet(Network):
     def __init__(self, encoder: EncoderNet, output_shape, cfg: configs.ModelConfig):
-        super(Network, self).__init__() # skip over the Network init function
+        super(Network, self).__init__()  # skip over the Network init function
         self.input_shape = encoder.output_shape
         self.output_shape = output_shape
-        if cfg.arch.decoder == 'mlp':
+        if cfg.arch.decoder == "mlp":
             _, mlp = encoder.model
             cnn = None
             flattened_activation = None
-        elif cfg.arch.decoder == 'cnn':
+        elif cfg.arch.decoder == "cnn":
             cnn, _, mlp = encoder.model
-            flattened_activation = configs.instantiate(cfg.cnn.final_activation)
+            flattened_activation = cfg.cnn.final_activation
         else:
-            raise NotImplementedError(f'Unsupported architecture: {cfg.arch.decoder}')
+            raise NotImplementedError(f"Unsupported architecture: {cfg.arch.decoder}")
         for layer in reversed(mlp.model):
-            if hasattr(layer, 'out_features'):
+            if hasattr(layer, "out_features"):
                 in_shape = layer.out_features
                 break
         flattened_shape = mlp.model[0].in_features
@@ -235,23 +260,23 @@ class DecoderNet(Network):
             n_outputs=flattened_shape,
             n_hidden_layers=cfg.mlp.n_hidden_layers,
             n_units_per_layer=cfg.mlp.n_units_per_layer,
-            activation=configs.instantiate(cfg.mlp.activation),
+            activation=cfg.mlp.activation,
             final_activation=flattened_activation,
         )
-        if cfg.arch.decoder == 'mlp':
+        if cfg.arch.decoder == "mlp":
             unflattened_shape = output_shape
         else:
             unflattened_shape = cnn.layer_shapes[-1]
         transposed_reshape = Reshape(-1, *unflattened_shape)
         layers = [transposed_mlp, transposed_reshape]
-        if cfg.arch.decoder != 'mlp':
+        if cfg.arch.decoder != "mlp":
             transposed_conv = CNN(
                 input_shape=unflattened_shape,
-                n_output_channels=self.make_reversed(cfg.cnn.n_output_channels)[1:] +
-                [cnn.n_input_channels],
+                n_output_channels=self.make_reversed(cfg.cnn.n_output_channels)[1:]
+                + [cnn.n_input_channels],
                 kernel_sizes=self.make_reversed(cfg.cnn.kernel_sizes),
                 strides=self.make_reversed(cfg.cnn.strides),
-                activation=configs.instantiate(cfg.cnn.activation),
+                activation=cfg.cnn.activation,
                 final_activation=None,
                 transpose=True,
                 layer_shapes=self.make_reversed(cnn.layer_shapes),
@@ -268,7 +293,7 @@ class DecoderNet(Network):
         return x
 
     def forward(self, x):
-        is_batched = (x.ndim > 1)
+        is_batched = x.ndim > 1
         x = super().forward(x)
         if not is_batched:
             x = torch.squeeze(x, 0)

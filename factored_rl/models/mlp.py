@@ -4,7 +4,8 @@ import torch
 import torch.nn
 
 from factored_rl import configs
-from .nnutils import Module, ActivationType, build_activation
+from .nnutils import Module, build_activation
+
 
 def coerce_to_int(x):
     try:
@@ -12,11 +13,12 @@ def coerce_to_int(x):
     except TypeError:
         pass
 
-    if hasattr(x, '__len__'):
+    if hasattr(x, "__len__"):
         assert len(x) == 1
         x = x[0]
 
     return x
+
 
 class MLP(Module):
     def __init__(
@@ -25,9 +27,9 @@ class MLP(Module):
         n_outputs,
         n_hidden_layers=1,
         n_units_per_layer=32,
-        activation: Optional[ActivationType] = torch.nn.Tanh, # activation or list thereof for internal layers
-        final_activation: Optional[ActivationType] = None, # activation or list thereof for final layer
-    ):# yapf: disable
+        activation: str = 'tanh', # activation or list thereof for internal layers
+        final_activation: str = '', # activation or list thereof for final layer
+    ):  # yapf: disable
         super().__init__()
         self.n_outputs = coerce_to_int(n_outputs)
         self.frozen = False
@@ -48,7 +50,7 @@ class MLP(Module):
         for i in range(self.n_layers):
             self.layers.append(torch.nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             for ac in activations[i]:
-                if ac is not None:
+                if ac:
                     self.layers.append(build_activation(ac, layer_sizes[i + 1]))
 
         self.model = torch.nn.Sequential(*self.layers)
@@ -60,8 +62,8 @@ class MLP(Module):
             n_outputs=n_outputs,
             n_hidden_layers=cfg.n_hidden_layers,
             n_units_per_layer=cfg.n_units_per_layer,
-            activation=configs.instantiate(cfg.activation),
-            final_activation=configs.instantiate(cfg.final_activation),
+            activation=cfg.activation,
+            final_activation=cfg.final_activation,
         )
 
     def forward(self, x):

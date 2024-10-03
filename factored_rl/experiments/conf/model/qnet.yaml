@@ -10,6 +10,5 @@ flatten_input: true
 qnet:
   n_hidden_layers: 1
   n_units_per_layer: 64
-  activation:
-    - _target_: torch.nn.ReLU
-  final_activation: null
+  activation: relu
+  final_activation: ''

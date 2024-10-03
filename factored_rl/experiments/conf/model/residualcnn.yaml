@@ -1,0 +1,25 @@
+defaults:
+  - base_model
+
+name: residualcnn
+arch:
+  type: acf
+  encoder: residualcnn
+lib: factored_rl
+flatten_input: false
+residualcnn:
+  cnn_blocks: 2
+  depth: 24
+  min_resolution: 4
+  cnn_activation: silu
+  transposed: false
+  kernel_size: 4
+  stride: 2
+  mlp_layers: [256, 256]
+  mlp_activation: silu
+qnet:
+  n_hidden_layers: 1
+  n_units_per_layer: 64
+  activation: relu
+  final_activation: ""
+n_latent_dims: 10
